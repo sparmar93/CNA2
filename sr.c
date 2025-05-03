@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "emulator.h"
-#include "gbn.h"
+#include "sr.h"
 
 /* ******************************************************************
    Go Back N protocol.  Adapted from J.F.Kurose
@@ -27,6 +27,7 @@
                           MUST BE SET TO 6 when submitting assignment */
 #define SEQSPACE 7      /* the min sequence space for GBN must be at least windowsize + 1 */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
+#define MAX_TIMER 100 
 
 /* generic procedure to compute the checksum of a packet.  Used by both sender and receiver
    the simulator will overwrite part of your packet with 'z's.  It will not overwrite your
@@ -61,6 +62,12 @@ static struct pkt buffer[WINDOWSIZE];  /* array for storing packets waiting for 
 static int windowfirst, windowlast;    /* array indexes of the first/last packet awaiting ACK */
 static int windowcount;                /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
+static struct pkt buffer[WINDOWSIZE];
+static bool acked[WINDOWSIZE];            // tracj which packets are ACKed
+static bool timer_running[WINDOWSIZE];    // track if timer is active
+static int A_nextseqnum;
+static int windowfirst = 0; windowlast = 0;
+static int windowcount = 0;
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
@@ -71,7 +78,7 @@ void A_output(struct msg message)
   /* if not blocked waiting on ACK */
   if ( windowcount < WINDOWSIZE) {
     if (TRACE > 1)
-      printf("----A: New message arrives, send window is not full, send new messge to layer3!\n");
+      printf("----A: New message arrives, window has space. Preparing packet.\n");
 
     /* create packet */
     sendpkt.seqnum = A_nextseqnum;
@@ -82,28 +89,47 @@ void A_output(struct msg message)
 
     /* put packet in window buffer */
     /* windowlast will always be 0 for alternating bit; but not for GoBackN */
-    windowlast = (windowlast + 1) % WINDOWSIZE;
+    // windowlast = (windowlast + 1) % WINDOWSIZE;
     buffer[windowlast] = sendpkt;
-    windowcount++;
+    // sendpkt_time[windowlast] = time;
+    acked[windowlast] = false;
+    // windowcount++;
 
     /* send out packet */
     if (TRACE > 0)
       printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
     tolayer3 (A, sendpkt);
 
-    /* start timer if first packet in window */
-    if (windowcount == 1)
-      starttimer(A,RTT);
+    // Start individual timer for this packet
+    if (!timer_running[windowlast]){
+      starttimer(A, RTT);
+      timer_running[windowlast] = true;
+    }
 
-    /* get next sequence number, wrap back to 0 */
+    // Move forward in circular buffer
+    windowlast = (windowlast + 1) % WINDOWSIZE;
     A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;
-  }
-  /* if blocked,  window is full */
-  else {
+    windowcount++;
+  } else {
     if (TRACE > 0)
-      printf("----A: New message arrives, send window is full\n");
+    print("----A: Window is full. Dropping message.\n");
     window_full++;
   }
+
+
+    /* start timer if first packet in window */
+  //   if (windowcount == 1)
+  //     starttimer(A,RTT);
+
+  //   /* get next sequence number, wrap back to 0 */
+  //   A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;
+  // }
+  // /* if blocked,  window is full */
+  // else {
+  //   if (TRACE > 0)
+  //     printf("----A: New message arrives, send window is full\n");
+  //   window_full++;
+  // }
 }
 
 
