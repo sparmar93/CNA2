@@ -47,7 +47,7 @@ int ComputeChecksum(struct pkt packet)
   return checksum;
 }
 
-bool IsCorrupted(struct pkt packet)
+int IsCorrupted(struct pkt packet)
 {
   if (packet.checksum == ComputeChecksum(packet))
     return (false);
@@ -59,14 +59,13 @@ bool IsCorrupted(struct pkt packet)
 /********* Sender (A) variables and functions ************/
 
 static struct pkt buffer[WINDOWSIZE];  /* array for storing packets waiting for ACK */
-static int windowfirst, windowlast;    /* array indexes of the first/last packet awaiting ACK */
+static int windowfirst = 0, windowlast = 0;    /* array indexes of the first/last packet awaiting ACK */
 static int windowcount;                /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
 static struct pkt buffer[WINDOWSIZE];
-static bool acked[WINDOWSIZE];            // tracj which packets are ACKed
-static bool timer_running[WINDOWSIZE];    // track if timer is active
+static int acked[WINDOWSIZE];            // tracj which packets are ACKed
+static int timer_running[WINDOWSIZE];    // track if timer is active
 static int A_nextseqnum;
-static int windowfirst = 0; windowlast = 0;
 static int windowcount = 0;
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
@@ -112,7 +111,7 @@ void A_output(struct msg message)
     windowcount++;
   } else {
     if (TRACE > 0)
-    print("----A: Window is full. Dropping message.\n");
+    printf("----A: Window is full. Dropping message.\n");
     window_full++;
   }
 
@@ -138,56 +137,91 @@ void A_output(struct msg message)
 */
 void A_input(struct pkt packet)
 {
-  int ackcount = 0;
+
   int i;
 
   /* if received ACK is not corrupted */
-  if (!IsCorrupted(packet)) {
+  if (IsCorrupted(packet)) {
     if (TRACE > 0)
-      printf("----A: uncorrupted ACK %d is received\n",packet.acknum);
+      printf("----A: corrupted ACK is received, do nothing!\n");
+      return;
+  }
+
+  if (TRACE > 0)
+    printf("----A: uncorrupted ACK %d is received\n", packet.acknum);
+
     total_ACKs_received++;
 
-    /* check if new ACK or duplicate */
-    if (windowcount != 0) {
-          int seqfirst = buffer[windowfirst].seqnum;
-          int seqlast = buffer[windowlast].seqnum;
-          /* check case when seqnum has and hasn't wrapped */
-          if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
-              ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
+    // Match ACK to a buffered packet
+    int found = 0;
+    for (i = 0; i < WINDOWSIZE; i++){
+      if (buffer[i].seqnum == packet.acknum && acked[i] == 0){
+        acked[i] = 1;
+        new_ACKs++;
+        found = 1;
+        if (TRACE > 0)
+          printf("----A: ACK %d is not a duplicate, marked as received\n", packet.acknum);
+        break;
+      }
+    }
 
-            /* packet is a new ACK */
-            if (TRACE > 0)
-              printf("----A: ACK %d is not a duplicate\n",packet.acknum);
-            new_ACKs++;
+    if (!found && TRACE > 0)
+      printf("----A: duplicate ACK received, do nothing!\n");
+    
+    while (windowcount > 0 && acked[windowfirst] == 1){
+      stoptimer(A);
+      acked[windowfirst] = 0;
 
-            /* cumulative acknowledgement - determine how many packets are ACKed */
-            if (packet.acknum >= seqfirst)
-              ackcount = packet.acknum + 1 - seqfirst;
-            else
-              ackcount = SEQSPACE - seqfirst + packet.acknum;
-
-	    /* slide window by the number of packets ACKed */
-            windowfirst = (windowfirst + ackcount) % WINDOWSIZE;
-
-            /* delete the acked packets from window buffer */
-            for (i=0; i<ackcount; i++)
-              windowcount--;
-
-	    /* start timer again if there are still more unacked packets in window */
-            stoptimer(A);
-            if (windowcount > 0)
-              starttimer(A, RTT);
-
-          }
-        }
-        else
-          if (TRACE > 0)
-        printf ("----A: duplicate ACK received, do nothing!\n");
+      windowfirst = (windowfirst + 1) % WINDOWSIZE;
+      windowcount--;
+      if (TRACE > 0)
+        printf("----A: sliding window forward to index %d\n", windowfirst);
+      
+        if (windowcount > 0)
+          starttimer(A, RTT);
+    }
   }
-  else
-    if (TRACE > 0)
-      printf ("----A: corrupted ACK is received, do nothing!\n");
-}
+//     /* check if new ACK or duplicate */
+//     if (windowcount != 0) {
+//           int seqfirst = buffer[windowfirst].seqnum;
+//           int seqlast = buffer[windowlast].seqnum;
+//           /* check case when seqnum has and hasn't wrapped */
+//           if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
+//               ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
+
+//             /* packet is a new ACK */
+//             if (TRACE > 0)
+//               printf("----A: ACK %d is not a duplicate\n",packet.acknum);
+//             new_ACKs++;
+
+//             /* cumulative acknowledgement - determine how many packets are ACKed */
+//             if (packet.acknum >= seqfirst)
+//               ackcount = packet.acknum + 1 - seqfirst;
+//             else
+//               ackcount = SEQSPACE - seqfirst + packet.acknum;
+
+// 	    /* slide window by the number of packets ACKed */
+//             windowfirst = (windowfirst + ackcount) % WINDOWSIZE;
+
+//             /* delete the acked packets from window buffer */
+//             for (i=0; i<ackcount; i++)
+//               windowcount--;
+
+// 	    /* start timer again if there are still more unacked packets in window */
+//             stoptimer(A);
+//             if (windowcount > 0)
+//               starttimer(A, RTT);
+
+//           }
+//         }
+//         else
+//           if (TRACE > 0)
+//         printf ("----A: duplicate ACK received, do nothing!\n");
+//   }
+//   else
+//     if (TRACE > 0)
+//       printf ("----A: corrupted ACK is received, do nothing!\n");
+// }
 
 /* called when A's timer goes off */
 void A_timerinterrupt(void)
@@ -299,3 +333,4 @@ void B_output(struct msg message)
 void B_timerinterrupt(void)
 {
 }
+
