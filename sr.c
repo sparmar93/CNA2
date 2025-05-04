@@ -233,16 +233,28 @@ void A_timerinterrupt(void)
   int i;
 
   if (TRACE > 0)
-    printf("----A: time out,resend packets!\n");
+    printf("----A: timer expired, checking unACKed packets for retransmission\n");
 
-  for(i=0; i<windowcount; i++) {
+  stoptimer(A);
 
-    if (TRACE > 0)
-      printf ("---A: resending packet %d\n", (buffer[(windowfirst+i) % WINDOWSIZE]).seqnum);
+  for(i=0; i<WINDOWSIZE; i++) {
+    if (acked[i] == 0 && windowcount > 0) {
+      if (TRACE > 0)
+          printf("----A: resending packet %d\n", buffer[i].seqnum);
+      tolayer3(A, buffer[i]);
+      packets_resent++;
 
-    tolayer3(A,buffer[(windowfirst+i) % WINDOWSIZE]);
-    packets_resent++;
-    if (i==0) starttimer(A,RTT);
+      // restart timer only once
+      starttimer(A, RTT);
+      break;
+    }
+
+    // if (TRACE > 0)
+    //   printf ("---A: resending packet %d\n", (buffer[(windowfirst+i) % WINDOWSIZE]).seqnum);
+
+    // tolayer3(A,buffer[(windowfirst+i) % WINDOWSIZE]);
+    // packets_resent++;
+    // if (i==0) starttimer(A,RTT);
   }
 }
 
